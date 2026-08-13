@@ -1,0 +1,16 @@
+from app.models.domain import (  # noqa: F401
+    Appointment,
+    AuditEvent,
+    Consent,
+    Consultation,
+    DoctorAvailability,
+    DoctorProfile,
+    MedicalDocument,
+    MedicalRecord,
+    Notification,
+    Pet,
+    Prescription,
+    PrescriptionItem,
+    Reminder,
+    User,
+)

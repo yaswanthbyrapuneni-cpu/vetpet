@@ -1,0 +1,18 @@
+{
+  "name": "VetPet Connect",
+  "short_name": "VetPet",
+  "description": "Digital veterinary healthcare for pet owners and veterinarians",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#f6faf8",
+  "theme_color": "#176b5b",
+  "icons": [
+    {
+      "src": "/pet-icon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    }
+  ]
+}
+

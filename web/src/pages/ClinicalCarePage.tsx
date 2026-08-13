@@ -1,0 +1,31 @@
+import { ArrowLeft, Plus, Save, Stethoscope, Trash2 } from 'lucide-react'
+import { useMutation, useQuery } from '@tanstack/react-query'
+import { type FormEvent, useEffect, useState } from 'react'
+import { Link, useParams } from 'react-router-dom'
+import { api, ApiError } from '../api/client'
+import { LoadingBlock } from '../components/Feedback'
+
+interface Consultation { id: string; diagnosis: string | null; doctor_notes?: string | null; approved_summary: string | null; follow_up_date: string | null }
+interface Medicine { medicine_name: string; dosage: string; frequency: string; duration: string; route: string; notes: string }
+const blankMedicine: Medicine = { medicine_name: '', dosage: '', frequency: '', duration: '', route: '', notes: '' }
+
+export function ClinicalCarePage() {
+  const { appointmentId = '' } = useParams()
+  const consultation = useQuery({ queryKey: ['consultation', appointmentId], queryFn: async () => { try { return await api.get<Consultation>(`/appointments/${appointmentId}/consultation`) } catch (error) { if (error instanceof ApiError && error.status === 404) return null; throw error } } })
+  const [diagnosis, setDiagnosis] = useState(''); const [notes, setNotes] = useState(''); const [summary, setSummary] = useState(''); const [followUp, setFollowUp] = useState('')
+  const [medicines, setMedicines] = useState<Medicine[]>([{ ...blankMedicine }]); const [instructions, setInstructions] = useState(''); const [message, setMessage] = useState<string | null>(null)
+  useEffect(() => { if (consultation.data) { setDiagnosis(consultation.data.diagnosis ?? ''); setNotes(consultation.data.doctor_notes ?? ''); setSummary(consultation.data.approved_summary ?? ''); setFollowUp(consultation.data.follow_up_date ?? '') } }, [consultation.data])
+  const save = useMutation({ mutationFn: async () => {
+    const payload = { diagnosis, doctor_notes: notes, approved_summary: summary, follow_up_date: followUp || null }
+    const record = consultation.data ? await api.patch<Consultation>(`/doctor/consultations/${consultation.data.id}`, payload) : await api.post<Consultation>(`/appointments/${appointmentId}/consultation`, payload)
+    await api.put(`/doctor/consultations/${record.id}/prescription`, { instructions: instructions || null, recommended_tests: [], items: medicines.map((item) => ({ ...item, route: item.route || null, notes: item.notes || null })) })
+    return record
+  }, onSuccess: async () => { setMessage('Clinical notes and prescription saved. The owner has been notified.'); await consultation.refetch() }, onError: (error) => setMessage(error instanceof Error ? error.message : 'Unable to save clinical record.') })
+  function submit(event: FormEvent) { event.preventDefault(); save.mutate() }
+  if (consultation.isLoading) return <div className="page-content"><LoadingBlock /></div>
+  return <div className="page-content"><Link className="back-link" to="/app/appointments"><ArrowLeft size={18} />Back to appointments</Link><header className="page-heading clinical-heading"><span className="eyebrow">Doctor workspace</span><h1>Consultation notes &amp; medicines</h1><p>Create a clear clinical record and structured prescription for the pet owner.</p></header>
+    <form className="clinical-form" onSubmit={submit}><section className="clinical-panel"><div className="panel-title"><Stethoscope /><div><h2>Clinical assessment</h2><p>Internal notes remain visible only to the veterinarian.</p></div></div><div className="form-grid"><label>Diagnosis<textarea value={diagnosis} onChange={(e) => setDiagnosis(e.target.value)} placeholder={consultation.data?.diagnosis ?? 'Clinical diagnosis'} /></label><label>Private doctor notes<textarea value={notes} onChange={(e) => setNotes(e.target.value)} placeholder={consultation.data?.doctor_notes ?? 'Observations and differential notes'} /></label><label className="span-two">Owner care summary<textarea value={summary} onChange={(e) => setSummary(e.target.value)} placeholder={consultation.data?.approved_summary ?? 'Clear guidance visible to the pet owner'} /></label><label>Follow-up date<input type="date" value={followUp} min={new Date().toISOString().slice(0,10)} onChange={(e) => setFollowUp(e.target.value)} /></label></div></section>
+      <section className="clinical-panel"><div className="panel-title"><Plus /><div><h2>Prescription</h2><p>Provide complete dosage and duration instructions.</p></div></div>{medicines.map((medicine, index) => <div className="medicine-row" key={index}><label>Medicine<input required value={medicine.medicine_name} onChange={(e) => setMedicines(medicines.map((m,i) => i === index ? {...m, medicine_name:e.target.value}:m))} /></label><label>Dosage<input required value={medicine.dosage} placeholder="e.g. 5 mg" onChange={(e) => setMedicines(medicines.map((m,i) => i === index ? {...m, dosage:e.target.value}:m))} /></label><label>Frequency<input required value={medicine.frequency} placeholder="Twice daily" onChange={(e) => setMedicines(medicines.map((m,i) => i === index ? {...m, frequency:e.target.value}:m))} /></label><label>Duration<input required value={medicine.duration} placeholder="5 days" onChange={(e) => setMedicines(medicines.map((m,i) => i === index ? {...m, duration:e.target.value}:m))} /></label><label>Route<input value={medicine.route} placeholder="Oral" onChange={(e) => setMedicines(medicines.map((m,i) => i === index ? {...m, route:e.target.value}:m))} /></label>{medicines.length > 1 && <button type="button" className="icon-button medicine-delete" onClick={() => setMedicines(medicines.filter((_,i) => i !== index))}><Trash2 /></button>}</div>)}<button type="button" className="text-button" onClick={() => setMedicines([...medicines, {...blankMedicine}])}><Plus size={16} /> Add another medicine</button><label>General instructions<textarea value={instructions} onChange={(e) => setInstructions(e.target.value)} placeholder="Food, rest, warning signs, and other instructions" /></label></section>
+      {message && <div className={save.isError ? 'inline-error' : 'success-banner'}>{message}</div>}<button className="button primary save-clinical" disabled={save.isPending}><Save />{save.isPending ? 'Saving clinical record…' : 'Save notes and issue prescription'}</button></form>
+  </div>
+}

@@ -1,0 +1,20 @@
+services:
+  db:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_DB: vetpet
+      POSTGRES_USER: vetpet
+      POSTGRES_PASSWORD: vetpet
+    ports:
+      - "5432:5432"
+    volumes:
+      - vetpet_postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U vetpet -d vetpet"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+volumes:
+  vetpet_postgres_data:
+
