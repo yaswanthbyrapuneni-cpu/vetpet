@@ -20,3 +20,7 @@ class PaymentStatusResponse(BaseModel):
     appointment_id: str
     payment_status: PaymentStatus
     payment_amount_paise: int
+
+
+class PaymentLinkResponse(BaseModel):
+    payment_link_url: str

@@ -52,9 +52,22 @@ class FakeRazorpayClient:
     """Stubs the parts of the razorpay SDK the payment routes call, so tests
     can exercise the pay -> auto-confirm flow without a real gateway."""
 
-    def __init__(self) -> None:
+    def __init__(self, link_signature_valid: bool = True) -> None:
         self.order = SimpleNamespace(create=lambda payload: {"id": f"order_{payload['receipt']}"})
-        self.utility = SimpleNamespace(verify_payment_signature=lambda payload: None)
+        self.payment_link = SimpleNamespace(
+            create=lambda payload: {"short_url": f"https://rzp.io/i/{payload['reference_id']}"}
+        )
+
+        def verify_payment_link_signature(payload: dict) -> None:
+            if not link_signature_valid:
+                import razorpay
+
+                raise razorpay.errors.SignatureVerificationError("bad signature")
+
+        self.utility = SimpleNamespace(
+            verify_payment_signature=lambda payload: None,
+            verify_payment_link_signature=verify_payment_link_signature,
+        )
 
 
 def pay(client: TestClient, headers: dict[str, str], appointment_id: str, monkeypatch) -> None:
@@ -294,4 +307,112 @@ def test_cannot_confirm_payment_on_a_cancelled_appointment(
 
     appointment = client.get(f"/api/v1/appointments/{appointment_id}", headers=owner_headers)
     assert appointment.json()["status"] == "cancelled"
+    assert appointment.json()["payment_status"] == "pending"
+
+
+def test_create_payment_link_returns_a_hosted_checkout_url(
+    client: TestClient, db_session: Session, monkeypatch
+) -> None:
+    import app.api.routes.payments as payments_module
+
+    owner_headers = create_owner(client, "00013")
+    create_doctor(client, db_session, "00013")
+    appointment_id = book(client, owner_headers).json()["id"]
+
+    monkeypatch.setattr(payments_module, "razorpay_client", lambda: FakeRazorpayClient())
+    response = client.post(
+        f"/api/v1/appointments/{appointment_id}/payment/link", headers=owner_headers
+    )
+    assert response.status_code == 200
+    assert response.json()["payment_link_url"] == f"https://rzp.io/i/{appointment_id}"
+
+
+def test_payment_link_callback_confirms_appointment_on_valid_signature(
+    client: TestClient, db_session: Session, monkeypatch
+) -> None:
+    import app.api.routes.payments as payments_module
+
+    owner_headers = create_owner(client, "00014")
+    create_doctor(client, db_session, "00014")
+    appointment_id = book(client, owner_headers).json()["id"]
+
+    monkeypatch.setattr(payments_module, "razorpay_client", lambda: FakeRazorpayClient())
+    callback = client.get(
+        f"/api/v1/appointments/{appointment_id}/payment/link-callback",
+        params={
+            "razorpay_payment_id": "pay_test123",
+            "razorpay_payment_link_id": "plink_test123",
+            "razorpay_payment_link_reference_id": appointment_id,
+            "razorpay_payment_link_status": "paid",
+            "razorpay_signature": "signature_test123",
+        },
+        follow_redirects=False,
+    )
+    assert callback.status_code in (302, 307)
+    assert callback.headers["location"] == (
+        f"madinavetpet://payment-complete?appointment_id={appointment_id}&status=success"
+    )
+
+    appointment = client.get(f"/api/v1/appointments/{appointment_id}", headers=owner_headers)
+    assert appointment.json()["payment_status"] == "paid"
+    assert appointment.json()["status"] == "confirmed"
+
+
+def test_payment_link_callback_rejects_invalid_signature(
+    client: TestClient, db_session: Session, monkeypatch
+) -> None:
+    import app.api.routes.payments as payments_module
+
+    owner_headers = create_owner(client, "00015")
+    create_doctor(client, db_session, "00015")
+    appointment_id = book(client, owner_headers).json()["id"]
+
+    monkeypatch.setattr(
+        payments_module, "razorpay_client", lambda: FakeRazorpayClient(link_signature_valid=False)
+    )
+    callback = client.get(
+        f"/api/v1/appointments/{appointment_id}/payment/link-callback",
+        params={
+            "razorpay_payment_id": "pay_test123",
+            "razorpay_payment_link_id": "plink_test123",
+            "razorpay_payment_link_reference_id": appointment_id,
+            "razorpay_payment_link_status": "paid",
+            "razorpay_signature": "forged",
+        },
+        follow_redirects=False,
+    )
+    assert callback.headers["location"] == (
+        f"madinavetpet://payment-complete?appointment_id={appointment_id}&status=failed"
+    )
+
+    appointment = client.get(f"/api/v1/appointments/{appointment_id}", headers=owner_headers)
+    assert appointment.json()["payment_status"] == "pending"
+
+
+def test_payment_link_callback_rejects_mismatched_reference_id(
+    client: TestClient, db_session: Session, monkeypatch
+) -> None:
+    import app.api.routes.payments as payments_module
+
+    owner_headers = create_owner(client, "00016")
+    create_doctor(client, db_session, "00016")
+    appointment_id = book(client, owner_headers).json()["id"]
+
+    monkeypatch.setattr(payments_module, "razorpay_client", lambda: FakeRazorpayClient())
+    callback = client.get(
+        f"/api/v1/appointments/{appointment_id}/payment/link-callback",
+        params={
+            "razorpay_payment_id": "pay_test123",
+            "razorpay_payment_link_id": "plink_test123",
+            "razorpay_payment_link_reference_id": "some-other-appointment-id",
+            "razorpay_payment_link_status": "paid",
+            "razorpay_signature": "signature_test123",
+        },
+        follow_redirects=False,
+    )
+    assert callback.headers["location"] == (
+        f"madinavetpet://payment-complete?appointment_id={appointment_id}&status=failed"
+    )
+
+    appointment = client.get(f"/api/v1/appointments/{appointment_id}", headers=owner_headers)
     assert appointment.json()["payment_status"] == "pending"

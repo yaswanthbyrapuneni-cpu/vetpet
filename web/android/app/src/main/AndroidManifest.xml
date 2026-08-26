@@ -22,6 +22,17 @@
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
 
+            <!-- Payment deep link: Razorpay's payment-link callback redirects
+                 here (see backend payments.py NATIVE_APP_CALLBACK_SCHEME) once
+                 payment finishes in the system browser tab, handing control
+                 back to this exact activity via Capacitor's App plugin. -->
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data android:scheme="madinavetpet" android:host="payment-complete" />
+            </intent-filter>
+
         </activity>
 
         <provider
