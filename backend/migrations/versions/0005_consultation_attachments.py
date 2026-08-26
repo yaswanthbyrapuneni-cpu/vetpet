@@ -55,3 +55,6 @@ def upgrade() -> None:
 
 def downgrade() -> None:
     op.drop_table("consultation_attachments")
+    # This is the type's original creator (0008 only ever reuses it, never
+    # owns its lifecycle) and by this point nothing references it anymore.
+    sa.Enum(name="attachmentkind").drop(op.get_bind(), checkfirst=True)

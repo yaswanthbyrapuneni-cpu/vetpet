@@ -15,12 +15,20 @@ branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 
 
+payment_status_enum = sa.Enum("PENDING", "PAID", "FAILED", name="paymentstatus")
+
+
 def upgrade() -> None:
+    # CREATE TABLE compiles an enum column's type automatically, but a bare
+    # ADD COLUMN does not — on Postgres (unlike SQLite, which has no real enum
+    # type) this must be created explicitly or the ALTER TABLE below fails
+    # with "type ... does not exist".
+    payment_status_enum.create(op.get_bind(), checkfirst=True)
     with op.batch_alter_table("appointments", schema=None) as batch_op:
         batch_op.add_column(
             sa.Column(
                 "payment_status",
-                sa.Enum("PENDING", "PAID", "FAILED", name="paymentstatus"),
+                payment_status_enum,
                 nullable=False,
                 server_default="PENDING",
             )
@@ -46,3 +54,4 @@ def downgrade() -> None:
         batch_op.drop_column("razorpay_order_id")
         batch_op.drop_column("payment_amount_paise")
         batch_op.drop_column("payment_status")
+    payment_status_enum.drop(op.get_bind(), checkfirst=True)

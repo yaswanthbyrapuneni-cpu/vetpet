@@ -1,5 +1,7 @@
+import os
 from pathlib import Path
 
+import pytest
 from alembic import command
 from alembic.config import Config
 from sqlalchemy import create_engine, inspect, text
@@ -38,6 +40,45 @@ def test_migrations_upgrade_downgrade_and_match_metadata(
     assert "users" in inspect(engine).get_table_names()
     engine.dispose()
     get_settings.cache_clear()
+
+
+@pytest.mark.skipif(
+    not os.environ.get("VETPET_TEST_POSTGRES_URL"),
+    reason=(
+        "Set VETPET_TEST_POSTGRES_URL to a scratch Postgres database to run this. "
+        "SQLite has no real enum types, so the equivalent SQLite-only test above "
+        "cannot catch Postgres-specific 'CREATE TYPE ... already exists' bugs — "
+        "exactly the class of bug this test exists to pin down after one shipped "
+        "undetected until a real deploy hit it. Example scratch DB:\n"
+        "  docker run --rm -d -p 15432:5432 -e POSTGRES_PASSWORD=vetpet "
+        "-e POSTGRES_USER=vetpet -e POSTGRES_DB=vetpet postgres:17-alpine\n"
+        "  VETPET_TEST_POSTGRES_URL=postgresql+psycopg://vetpet:vetpet@localhost:15432/vetpet"
+    ),
+)
+def test_migrations_upgrade_downgrade_cycle_on_postgres(monkeypatch) -> None:
+    url = os.environ["VETPET_TEST_POSTGRES_URL"]
+    monkeypatch.setenv("VETPET_DATABASE_URL", url)
+    get_settings.cache_clear()
+    config = Config("alembic.ini")
+    engine = create_engine(url)
+    try:
+        # Twice, not once: several migrations only failed the *second* time
+        # an enum type was reused (an already-existing type behaves
+        # differently than a freshly-created one) — a single upgrade/downgrade
+        # pass would have missed that.
+        for _ in range(2):
+            command.upgrade(config, "head")
+            assert "notifications" in inspect(engine).get_table_names()
+            command.downgrade(config, "base")
+            assert "users" not in inspect(engine).get_table_names()
+        command.upgrade(config, "head")
+        assert "users" in inspect(engine).get_table_names()
+    finally:
+        with engine.begin() as conn:
+            conn.execute(text("DROP SCHEMA public CASCADE"))
+            conn.execute(text("CREATE SCHEMA public"))
+        engine.dispose()
+        get_settings.cache_clear()
 
 
 def test_enum_columns_store_member_name_not_value(db_session: Session) -> None:
