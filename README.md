@@ -220,33 +220,56 @@ shared Caddy once there is one.
    docker compose up -d --build
    ```
 
-#### No domain yet
+#### No domain yet — quick bare-IP smoke test only
 
 `docker-compose.override.yml` is already in the repo and loads automatically
 with the command above — it publishes the app directly on the server's IP at
 `http://<server-ip>:18080`, completely bypassing the shared Caddy, so nothing
 about other projects' routing is touched. `VETPET_CORS_ORIGINS` doesn't
 matter for this path: the browser sees the app and its API as the same
-origin either way. Whenever a domain is ready, delete
-`docker-compose.override.yml` and continue with the step below instead.
+origin either way.
 
-#### Once there's a domain
+This is fine for a first look in a desktop browser, but **plain HTTP breaks
+real payment flows** (any real browser tab — including the one the Android
+app opens for Razorpay checkout — upgrades navigation to a bare IP to HTTPS
+first and fails outright rather than falling back to HTTP, since there's no
+certificate to serve). Use the sslip.io step below for anything beyond a
+first look, including all Android app testing.
 
-Set `VETPET_CORS_ORIGINS` in `.env` to `["https://yourdomain.com"]`, then
-append a new block to the *existing* Caddyfile (don't touch the blocks
-already in it):
+#### Free real HTTPS today, without a purchased domain
+
+[sslip.io](https://sslip.io) is a free public DNS service: any hostname of
+the form `<ip-with-dashes>.sslip.io` resolves straight back to that IP — a
+real, publicly resolvable name, so Caddy can obtain a genuine trusted Let's
+Encrypt certificate for it exactly like a real domain, no purchase needed.
+For this server (`35.254.19.129`), that's `35-254-19-129.sslip.io`.
+
+Set `VETPET_CORS_ORIGINS` in `.env` to `["https://35-254-19-129.sslip.io"]`,
+restart the backend (`docker compose up -d --build`), then append a new
+block to the *existing* shared Caddyfile (don't touch the blocks already in
+it):
 ```
-yourdomain.com, www.yourdomain.com {
+35-254-19-129.sslip.io {
     reverse_proxy vetpet-frontend:80
 }
 ```
-Then reload Caddy without restarting it (zero downtime for the other
-projects it's already serving):
+Reload Caddy without restarting it (zero downtime for the other projects
+it's already serving):
 ```bash
 sudo docker exec caddy caddy reload --config /etc/caddy/Caddyfile
 ```
-This needs your domain's DNS A record already pointed at the server's
-external IP, or the automatic Let's Encrypt certificate request fails.
+`web/capacitor.config.ts` already points the Android app at this sslip.io
+URL. If the VM's IP ever changes, update both the Caddyfile block and
+`capacitor.config.ts` to match, then rebuild the APK — every already-
+installed copy keeps using whatever IP it shipped with.
+
+#### Once there's a real purchased domain
+
+Same as above, just with your real domain instead of the sslip.io one —
+update `VETPET_CORS_ORIGINS`, the Caddyfile block, and
+`web/capacitor.config.ts` to match, and rebuild the APK. This needs your
+domain's DNS A record already pointed at the server's external IP, or the
+automatic Let's Encrypt certificate request fails.
 
 ### Deploy on a dedicated host (you own ports 80/443 outright)
 

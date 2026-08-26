@@ -7,13 +7,16 @@ const config: CapacitorConfig = {
   server: {
     // Points the app at the live deployed site directly — no bundled web
     // assets are used, this is a thin native wrapper around the real app.
-    // No domain yet, so this is a plain-HTTP IP:port; cleartext must stay
-    // true until that's replaced with a real https:// domain, at which
-    // point this whole `server` block should be removed (or updated) and
-    // the app rebuilt — every already-installed APK keeps pointing at
-    // whatever's baked in here until reinstalled.
-    url: 'http://35.254.19.129:18080',
-    cleartext: true,
+    // sslip.io is a free public DNS service that resolves <ip-with-dashes>.sslip.io
+    // straight back to that IP — a real, publicly resolvable hostname, so
+    // Caddy can obtain a genuine trusted Let's Encrypt certificate for it
+    // with no purchased domain needed. This matters beyond convenience: a
+    // real browser tab (used for payment) upgrades any bare-IP navigation to
+    // HTTPS first and fails outright rather than falling back to HTTP, which
+    // broke the Razorpay payment-link callback until this existed. Every
+    // already-installed APK keeps pointing at whatever's baked in here until
+    // reinstalled — update this and rebuild if the VM's IP ever changes.
+    url: 'https://35-254-19-129.sslip.io',
   },
 }
 
