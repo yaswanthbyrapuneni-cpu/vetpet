@@ -1,191 +1,297 @@
-from datetime import UTC, datetime, timedelta
+from types import SimpleNamespace
 
 from fastapi.testclient import TestClient
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app.models.domain import DoctorProfile, VerificationStatus
-
-PASSWORD = "strong-password"
-
-
-def auth_headers(client: TestClient, email: str, password: str = PASSWORD) -> dict[str, str]:
-    login = client.post("/api/v1/auth/login", json={"email": email, "password": password})
-    assert login.status_code == 200
-    return {"Authorization": f"Bearer {login.json()['access_token']}"}
+from app.models.domain import DoctorProfile, Pet, User, UserRole, VerificationStatus
+from tests.conftest import otp_login_headers
 
 
-def create_owner_and_pet(client: TestClient, suffix: str) -> tuple[dict[str, str], str]:
-    email = f"appointment-owner-{suffix}@example.com"
-    registration = client.post(
-        "/api/v1/auth/register/owner",
-        json={"email": email, "password": PASSWORD, "full_name": "Appointment Owner"},
-    )
-    assert registration.status_code == 201
-    headers = auth_headers(client, email)
-    pet = client.post(
-        "/api/v1/pets",
-        json={"name": "Milo", "species": "Dog", "weight_kg": 12.5},
-        headers=headers,
-    )
-    assert pet.status_code == 201
-    return headers, pet.json()["id"]
+def create_owner(client: TestClient, suffix: str) -> dict[str, str]:
+    mobile_number = f"+9198765{suffix.zfill(5)}"
+    return otp_login_headers(client, mobile_number, full_name="Appointment Owner")
 
 
 def create_doctor(
     client: TestClient, db_session: Session, suffix: str, verified: bool = True
 ) -> tuple[dict[str, str], str]:
-    email = f"appointment-doctor-{suffix}@example.com"
-    registration = client.post(
-        "/api/v1/auth/register/doctor",
-        json={
-            "email": email,
-            "password": PASSWORD,
-            "full_name": "Dr Appointment",
-            "license_number": f"APPT-{suffix.upper()}",
-            "qualification": "BVSc",
-        },
+    mobile_number = f"+9198766{suffix.zfill(5)}"
+    doctor_user = User(mobile_number=mobile_number, full_name="Dr Appointment", role=UserRole.DOCTOR)
+    profile = DoctorProfile(
+        user=doctor_user,
+        license_number=f"APPT-{suffix.upper()}",
+        qualification="BVSc",
+        verification_status=(
+            VerificationStatus.VERIFIED if verified else VerificationStatus.PENDING
+        ),
     )
-    assert registration.status_code == 201
-    headers = auth_headers(client, email)
-    profile = db_session.scalar(
-        select(DoctorProfile).where(
-            DoctorProfile.user_id == registration.json()["user"]["id"]
-        )
-    )
+    db_session.add_all([doctor_user, profile])
+    db_session.commit()
+    headers = otp_login_headers(client, mobile_number)
+    profile = db_session.scalar(select(DoctorProfile).where(DoctorProfile.user_id == doctor_user.id))
     assert profile is not None
-    if verified:
-        profile.verification_status = VerificationStatus.VERIFIED
-        db_session.commit()
     return headers, profile.id
 
 
-def create_slot(client: TestClient, headers: dict[str, str], days: int = 2) -> str:
-    starts_at = datetime.now(UTC) + timedelta(days=days)
-    response = client.post(
-        "/api/v1/doctors/me/availability",
-        json={
-            "starts_at": starts_at.isoformat(),
-            "ends_at": (starts_at + timedelta(minutes=30)).isoformat(),
-        },
-        headers=headers,
-    )
-    assert response.status_code == 201
-    return response.json()["id"]
-
-
-def book(client: TestClient, headers: dict[str, str], pet_id: str, slot_id: str):
+def book(
+    client: TestClient,
+    headers: dict[str, str],
+    pet_name: str = "Milo",
+    species: str = "dog",
+    reason: str = "Persistent cough",
+):
     return client.post(
         "/api/v1/appointments",
-        json={
-            "pet_id": pet_id,
-            "availability_id": slot_id,
-            "reason": "Persistent cough",
-        },
+        json={"pet_name": pet_name, "species": species, "reason": reason},
         headers=headers,
     )
 
 
-def test_owner_books_and_doctor_confirms_appointment(
+class FakeRazorpayClient:
+    """Stubs the parts of the razorpay SDK the payment routes call, so tests
+    can exercise the pay -> auto-confirm flow without a real gateway."""
+
+    def __init__(self) -> None:
+        self.order = SimpleNamespace(create=lambda payload: {"id": f"order_{payload['receipt']}"})
+        self.utility = SimpleNamespace(verify_payment_signature=lambda payload: None)
+
+
+def pay(client: TestClient, headers: dict[str, str], appointment_id: str, monkeypatch) -> None:
+    import app.api.routes.payments as payments_module
+
+    monkeypatch.setattr(payments_module, "razorpay_client", lambda: FakeRazorpayClient())
+    order = client.post(f"/api/v1/appointments/{appointment_id}/payment/order", headers=headers)
+    assert order.status_code == 200
+    verify = client.post(
+        f"/api/v1/appointments/{appointment_id}/payment/verify",
+        json={
+            "razorpay_order_id": order.json()["order_id"],
+            "razorpay_payment_id": "pay_test123",
+            "razorpay_signature": "signature_test123",
+        },
+        headers=headers,
+    )
+    assert verify.status_code == 200
+
+
+def test_booking_is_instant_and_unconfirmed_until_paid(
     client: TestClient, db_session: Session
 ) -> None:
-    owner_headers, pet_id = create_owner_and_pet(client, "booking")
-    doctor_headers, _ = create_doctor(client, db_session, "booking")
-    slot_id = create_slot(client, doctor_headers)
+    owner_headers = create_owner(client, "00001")
+    create_doctor(client, db_session, "00001")
 
-    booked = book(client, owner_headers, pet_id, slot_id)
+    booked = book(client, owner_headers)
     assert booked.status_code == 201
     assert booked.json()["status"] == "requested"
-    appointment_id = booked.json()["id"]
-
-    doctor_list = client.get("/api/v1/appointments", headers=doctor_headers)
-    assert [item["id"] for item in doctor_list.json()] == [appointment_id]
-    confirmed = client.post(
-        f"/api/v1/appointments/{appointment_id}/confirm",
-        json={},
-        headers=doctor_headers,
-    )
-    assert confirmed.status_code == 200
-    assert confirmed.json()["status"] == "confirmed"
-    owner_notifications = client.get("/api/v1/notifications", headers=owner_headers).json()
-    assert owner_notifications[0]["title"] == "Appointment confirmed"
-    doctor_notifications = client.get("/api/v1/notifications", headers=doctor_headers).json()
-    assert doctor_notifications[0]["title"] == "New appointment request"
+    assert booked.json()["payment_status"] == "pending"
+    assert booked.json()["payment_amount_paise"] == 20000
 
 
-def test_unverified_doctor_slot_cannot_be_booked(
+def test_no_verified_doctor_available_returns_409(
     client: TestClient, db_session: Session
 ) -> None:
-    owner_headers, pet_id = create_owner_and_pet(client, "pending")
-    doctor_headers, _ = create_doctor(client, db_session, "pending", verified=False)
-    slot_id = create_slot(client, doctor_headers)
+    owner_headers = create_owner(client, "00002")
+    create_doctor(client, db_session, "00002", verified=False)
 
-    response = book(client, owner_headers, pet_id, slot_id)
+    response = book(client, owner_headers)
     assert response.status_code == 409
 
 
-def test_cancel_releases_slot_for_a_new_booking(
+def test_payment_auto_confirms_appointment_and_notifies_doctor(
+    client: TestClient, db_session: Session, monkeypatch
+) -> None:
+    owner_headers = create_owner(client, "00003")
+    doctor_headers, _ = create_doctor(client, db_session, "00003")
+    booked = book(client, owner_headers)
+    appointment_id = booked.json()["id"]
+
+    pay(client, owner_headers, appointment_id, monkeypatch)
+
+    appointment = client.get(f"/api/v1/appointments/{appointment_id}", headers=owner_headers)
+    assert appointment.json()["status"] == "confirmed"
+    assert appointment.json()["payment_status"] == "paid"
+    assert appointment.json()["paid_at"] is not None
+    assert appointment.json()["razorpay_payment_id"] == "pay_test123"
+
+    doctor_notifications = client.get("/api/v1/notifications", headers=doctor_headers).json()
+    assert doctor_notifications[0]["title"] == "New paid consultation"
+
+
+def test_other_doctor_cannot_read_appointment(
     client: TestClient, db_session: Session
 ) -> None:
-    owner_headers, pet_id = create_owner_and_pet(client, "cancel")
-    doctor_headers, _ = create_doctor(client, db_session, "cancel")
-    slot_id = create_slot(client, doctor_headers)
-    first = book(client, owner_headers, pet_id, slot_id)
+    owner_headers = create_owner(client, "00005")
+    create_doctor(client, db_session, "00005")
+    other_headers, _ = create_doctor(client, db_session, "00006")
+    appointment = book(client, owner_headers)
+
+    response = client.get(
+        f"/api/v1/appointments/{appointment.json()['id']}", headers=other_headers
+    )
+    assert response.status_code == 404
+
+
+def test_repeat_booking_for_same_animal_reuses_the_same_pet_record(
+    client: TestClient, db_session: Session
+) -> None:
+    owner_headers = create_owner(client, "00007")
+    create_doctor(client, db_session, "00007")
+
+    first = book(client, owner_headers, pet_name="Simba", species="dog")
+    second = book(client, owner_headers, pet_name="simba", species="dog")
+
+    assert first.status_code == 201
+    assert second.status_code == 201
+    assert first.json()["pet_id"] == second.json()["pet_id"]
+    assert db_session.scalar(select(Pet).where(Pet.name == "Simba")) is not None
+
+
+def test_consultation_fee_varies_by_species(
+    client: TestClient, db_session: Session
+) -> None:
+    owner_headers = create_owner(client, "00009")
+    create_doctor(client, db_session, "00009")
+
+    hen_booking = book(client, owner_headers, pet_name="Kodi", species="country_hen")
+    assert hen_booking.json()["payment_amount_paise"] == 2500
+
+    goat_booking = book(client, owner_headers, pet_name="Metha", species="goat")
+    assert goat_booking.json()["payment_amount_paise"] == 5000
+
+    cow_booking = book(client, owner_headers, pet_name="Lakshmi", species="cow")
+    assert cow_booking.json()["payment_amount_paise"] == 20000
+
+
+def test_cancel_appointment(client: TestClient, db_session: Session) -> None:
+    owner_headers = create_owner(client, "00010")
+    create_doctor(client, db_session, "00010")
+    booked = book(client, owner_headers)
 
     cancelled = client.post(
-        f"/api/v1/appointments/{first.json()['id']}/cancel",
+        f"/api/v1/appointments/{booked.json()['id']}/cancel",
         json={"reason": "Pet has recovered"},
         headers=owner_headers,
     )
     assert cancelled.status_code == 200
     assert cancelled.json()["status"] == "cancelled"
-    assert book(client, owner_headers, pet_id, slot_id).status_code == 201
 
 
-def test_reschedule_releases_old_slot_and_requires_new_confirmation(
-    client: TestClient, db_session: Session
+def test_unpaid_cancelled_appointment_is_not_listed(
+    client: TestClient, db_session: Session, monkeypatch
 ) -> None:
-    owner_headers, pet_id = create_owner_and_pet(client, "reschedule")
-    doctor_headers, _ = create_doctor(client, db_session, "reschedule")
-    first_slot = create_slot(client, doctor_headers, days=2)
-    second_slot = create_slot(client, doctor_headers, days=3)
-    appointment = book(client, owner_headers, pet_id, first_slot)
+    owner_headers = create_owner(client, "00015")
+    doctor_headers, _ = create_doctor(client, db_session, "00015")
 
-    moved = client.post(
-        f"/api/v1/appointments/{appointment.json()['id']}/reschedule",
-        json={"availability_id": second_slot},
+    # Never paid, then cancelled -- abandoned booking debris, should vanish from lists.
+    abandoned = book(client, owner_headers)
+    client.post(
+        f"/api/v1/appointments/{abandoned.json()['id']}/cancel",
+        json={"reason": "Changed my mind"},
         headers=owner_headers,
     )
-    assert moved.status_code == 200
-    assert moved.json()["availability_id"] == second_slot
-    assert moved.json()["status"] == "requested"
-    assert book(client, owner_headers, pet_id, first_slot).status_code == 201
+
+    # Paid, confirmed, then cancelled -- a real record, should still be listed.
+    paid_then_cancelled = book(client, owner_headers)
+    pay(client, owner_headers, paid_then_cancelled.json()["id"], monkeypatch)
+    client.post(
+        f"/api/v1/appointments/{paid_then_cancelled.json()['id']}/cancel",
+        json={"reason": "Emergency came up"},
+        headers=owner_headers,
+    )
+
+    owner_list = client.get("/api/v1/appointments", headers=owner_headers).json()
+    ids = [a["id"] for a in owner_list]
+    assert abandoned.json()["id"] not in ids
+    assert paid_then_cancelled.json()["id"] in ids
+
+    doctor_list = client.get("/api/v1/appointments", headers=doctor_headers).json()
+    doctor_ids = [a["id"] for a in doctor_list]
+    assert abandoned.json()["id"] not in doctor_ids
+    assert paid_then_cancelled.json()["id"] in doctor_ids
 
 
-def test_other_doctor_cannot_change_appointment(
+def test_complete_appointment_notifies_the_owner(
+    client: TestClient, db_session: Session, monkeypatch
+) -> None:
+    owner_headers = create_owner(client, "00013")
+    doctor_headers, _ = create_doctor(client, db_session, "00013")
+    booked = book(client, owner_headers)
+    appointment_id = booked.json()["id"]
+    pay(client, owner_headers, appointment_id, monkeypatch)
+
+    completed = client.post(
+        f"/api/v1/appointments/{appointment_id}/complete", headers=doctor_headers
+    )
+    assert completed.status_code == 200
+    assert completed.json()["status"] == "completed"
+
+    owner_notifications = client.get("/api/v1/notifications", headers=owner_headers).json()
+    assert owner_notifications[0]["title"] == "Consultation completed"
+
+
+def test_only_confirmed_appointment_can_be_completed(
     client: TestClient, db_session: Session
 ) -> None:
-    owner_headers, pet_id = create_owner_and_pet(client, "isolation")
-    assigned_headers, _ = create_doctor(client, db_session, "assigned")
-    other_headers, _ = create_doctor(client, db_session, "other")
-    slot_id = create_slot(client, assigned_headers)
-    appointment = book(client, owner_headers, pet_id, slot_id)
+    owner_headers = create_owner(client, "00014")
+    doctor_headers, _ = create_doctor(client, db_session, "00014")
+    booked = book(client, owner_headers)
 
     response = client.post(
-        f"/api/v1/appointments/{appointment.json()['id']}/confirm",
-        json={},
-        headers=other_headers,
+        f"/api/v1/appointments/{booked.json()['id']}/complete", headers=doctor_headers
     )
-    assert response.status_code == 404
+    assert response.status_code == 409
 
 
-def test_owner_cannot_book_another_owners_pet(
-    client: TestClient, db_session: Session
+def test_cancel_appointment_notifies_the_doctor(client: TestClient, db_session: Session) -> None:
+    owner_headers = create_owner(client, "00011")
+    doctor_headers, _ = create_doctor(client, db_session, "00011")
+    booked = book(client, owner_headers)
+
+    client.post(
+        f"/api/v1/appointments/{booked.json()['id']}/cancel",
+        json={"reason": "Pet has recovered"},
+        headers=owner_headers,
+    )
+
+    doctor_notifications = client.get("/api/v1/notifications", headers=doctor_headers).json()
+    assert doctor_notifications[0]["title"] == "Appointment cancelled"
+
+
+def test_cannot_confirm_payment_on_a_cancelled_appointment(
+    client: TestClient, db_session: Session, monkeypatch
 ) -> None:
-    first_headers, first_pet = create_owner_and_pet(client, "first")
-    second_headers, _ = create_owner_and_pet(client, "second")
-    doctor_headers, _ = create_doctor(client, db_session, "pet-security")
-    slot_id = create_slot(client, doctor_headers)
+    owner_headers = create_owner(client, "00012")
+    create_doctor(client, db_session, "00012")
+    booked = book(client, owner_headers)
+    appointment_id = booked.json()["id"]
 
-    assert book(client, second_headers, first_pet, slot_id).status_code == 404
-    assert book(client, first_headers, first_pet, slot_id).status_code == 201
+    import app.api.routes.payments as payments_module
+
+    monkeypatch.setattr(payments_module, "razorpay_client", lambda: FakeRazorpayClient())
+    order = client.post(
+        f"/api/v1/appointments/{appointment_id}/payment/order", headers=owner_headers
+    )
+    assert order.status_code == 200
+
+    cancelled = client.post(
+        f"/api/v1/appointments/{appointment_id}/cancel",
+        json={"reason": "Changed my mind"},
+        headers=owner_headers,
+    )
+    assert cancelled.status_code == 200
+
+    verify = client.post(
+        f"/api/v1/appointments/{appointment_id}/payment/verify",
+        json={
+            "razorpay_order_id": order.json()["order_id"],
+            "razorpay_payment_id": "pay_test123",
+            "razorpay_signature": "signature_test123",
+        },
+        headers=owner_headers,
+    )
+    assert verify.status_code == 409
+
+    appointment = client.get(f"/api/v1/appointments/{appointment_id}", headers=owner_headers)
+    assert appointment.json()["status"] == "cancelled"
+    assert appointment.json()["payment_status"] == "pending"

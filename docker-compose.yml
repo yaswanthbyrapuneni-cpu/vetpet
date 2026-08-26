@@ -1,12 +1,15 @@
 services:
   db:
     image: postgres:17-alpine
+    container_name: vetpet-db
     environment:
       POSTGRES_DB: vetpet
       POSTGRES_USER: vetpet
-      POSTGRES_PASSWORD: vetpet
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-vetpet}
     ports:
-      - "5432:5432"
+      # Bound to localhost only — Postgres has no business being reachable
+      # from the internet. SSH-tunnel in if you need to inspect it remotely.
+      - "127.0.0.1:5432:5432"
     volumes:
       - vetpet_postgres_data:/var/lib/postgresql/data
     healthcheck:
@@ -14,7 +17,49 @@ services:
       interval: 5s
       timeout: 5s
       retries: 10
+    networks:
+      - internal
+    restart: unless-stopped
+
+  backend:
+    build: ./backend
+    container_name: vetpet-backend
+    env_file: .env
+    environment:
+      VETPET_DATABASE_URL: postgresql+psycopg://vetpet:${POSTGRES_PASSWORD:-vetpet}@db:5432/vetpet
+    depends_on:
+      db:
+        condition: service_healthy
+    volumes:
+      - vetpet_uploads:/app/uploads
+    networks:
+      - internal
+      - web
+    restart: unless-stopped
+
+  frontend:
+    build: ./web
+    container_name: vetpet-frontend
+    depends_on:
+      - backend
+    networks:
+      - web
+    restart: unless-stopped
+
+networks:
+  # No ports are published anywhere in this file on purpose: this project
+  # shares a host with other apps behind one existing Caddy reverse proxy.
+  # "web" is that shared instance's own pre-existing external network — Caddy
+  # already sits on it and reaches other projects' containers by name over
+  # it, so joining it (instead of publishing 80/443/8000 ourselves, all of
+  # which are already taken on this host) is how our containers become
+  # reachable without touching anything already running. See the "Deploy on
+  # a shared host" section of the README for the matching Caddyfile block.
+  web:
+    external: true
+  internal:
+    driver: bridge
 
 volumes:
   vetpet_postgres_data:
-
+  vetpet_uploads:

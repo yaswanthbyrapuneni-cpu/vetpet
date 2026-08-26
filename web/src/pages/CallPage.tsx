@@ -1,9 +1,10 @@
 import { ArrowLeft, Circle, Mic, MicOff, PhoneOff, Square, Video, VideoOff } from 'lucide-react'
 import { useQuery } from '@tanstack/react-query'
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { Link, useNavigate, useParams } from 'react-router-dom'
+import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom'
 import { api, ApiError, tokenStore } from '../api/client'
 import { ErrorBlock, LoadingBlock } from '../components/Feedback'
+import { RING_TIMEOUT_MS } from '../realtime/constants'
 import type { Appointment } from '../types'
 import { useAuth } from '../auth/AuthContext'
 
@@ -11,6 +12,8 @@ type Signal = { type: string; initiator?: boolean; sdp?: RTCSessionDescriptionIn
 
 export function CallPage() {
   const { appointmentId = '' } = useParams()
+  const [searchParams] = useSearchParams()
+  const autojoin = searchParams.get('autojoin') === '1'
   const navigate = useNavigate()
   const { user } = useAuth()
   const query = useQuery({ queryKey: ['appointment', appointmentId], queryFn: () => api.get<Appointment>(`/appointments/${appointmentId}`), enabled: Boolean(appointmentId) })
@@ -24,6 +27,9 @@ export function CallPage() {
   const recordingChunks = useRef<Blob[]>([])
   const recordingStarted = useRef(0)
   const recordingAudioContext = useRef<AudioContext | null>(null)
+  const connectedOnce = useRef(false)
+  const ringTimeout = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const autojoinedRef = useRef(false)
   const [joined, setJoined] = useState(false)
   const [status, setStatus] = useState('Ready to join')
   const [error, setError] = useState<string | null>(null)
@@ -34,17 +40,30 @@ export function CallPage() {
   const [savingRecording, setSavingRecording] = useState(false)
 
   const endCall = useCallback(() => {
+    if (ringTimeout.current) clearTimeout(ringTimeout.current)
     socket.current?.close(); peer.current?.close(); localStream.current?.getTracks().forEach((track) => track.stop())
     socket.current = null; peer.current = null; localStream.current = null; setJoined(false)
   }, [])
   useEffect(() => endCall, [endCall])
+
+  useEffect(() => {
+    function onCallStatus(event: Event) {
+      const detail = (event as CustomEvent<{ type: string; appointment_id: string }>).detail
+      if (detail.appointment_id !== appointmentId || connectedOnce.current) return
+      setStatus(detail.type === 'call_declined' ? 'Call declined' : 'Call ended')
+      setError(detail.type === 'call_declined' ? 'The pet owner declined this call.' : 'The call was ended before connecting.')
+      endCall()
+    }
+    window.addEventListener('realtime:call-status', onCallStatus)
+    return () => window.removeEventListener('realtime:call-status', onCallStatus)
+  }, [appointmentId, endCall])
 
   async function addPendingCandidates(connection: RTCPeerConnection) {
     for (const candidate of pendingCandidates.current) await connection.addIceCandidate(candidate)
     pendingCandidates.current = []
   }
 
-  async function joinCall() {
+  const joinCall = useCallback(async () => {
     if (!query.data) return
     setError(null); setStatus('Requesting camera and microphone…')
     try {
@@ -55,7 +74,14 @@ export function CallPage() {
       const connection = new RTCPeerConnection({ iceServers: [{ urls: 'stun:stun.l.google.com:19302' }] })
       peer.current = connection; stream.getTracks().forEach((track) => connection.addTrack(track, stream))
       connection.ontrack = (event) => { if (remoteVideo.current) remoteVideo.current.srcObject = event.streams[0]; setHasRemoteVideo(true) }
-      connection.onconnectionstatechange = () => setStatus(connection.connectionState === 'connected' ? 'Connected' : connection.connectionState)
+      connection.onconnectionstatechange = () => {
+        const connected = connection.connectionState === 'connected'
+        setStatus(connected ? 'Connected' : connection.connectionState)
+        if (connected) {
+          connectedOnce.current = true
+          if (ringTimeout.current) clearTimeout(ringTimeout.current)
+        }
+      }
       const protocol = location.protocol === 'https:' ? 'wss:' : 'ws:'
       const ws = new WebSocket(`${protocol}//${location.host}/api/v1/calls/ws/${appointmentId}`)
       socket.current = ws
@@ -72,8 +98,18 @@ export function CallPage() {
       ws.onerror = () => setError('Unable to connect to the secure call room. Make sure the backend is running.')
       ws.onclose = (event) => { if (event.code === 1008) setError(event.reason || 'Call access was denied.') }
       setJoined(true)
+      if (user?.role === 'doctor') {
+        ringTimeout.current = setTimeout(() => {
+          if (!connectedOnce.current) {
+            setError('The pet owner did not answer.')
+            setStatus('No answer')
+            void api.post(`/appointments/${appointmentId}/call/cancel`)
+            endCall()
+          }
+        }, RING_TIMEOUT_MS)
+      }
     } catch (caught) { setError(caught instanceof Error ? caught.message : 'Camera or microphone access failed.'); endCall() }
-  }
+  }, [query.data, appointmentId, user, endCall])
   function toggleAudio() { const track = localStream.current?.getAudioTracks()[0]; if (track) { track.enabled = !track.enabled; setMicOn(track.enabled) } }
   function toggleVideo() { const track = localStream.current?.getVideoTracks()[0]; if (track) { track.enabled = !track.enabled; setCameraOn(track.enabled) } }
   async function startRecording() {
@@ -115,7 +151,21 @@ export function CallPage() {
     finally { recordingChunks.current = []; recordingAudioContext.current?.close(); recordingAudioContext.current = null; setSavingRecording(false) }
   }
   function stopRecording() { if (recorder.current?.state === 'recording') recorder.current.stop(); recorder.current = null; setRecording(false) }
-  function leave() { if (recording) stopRecording(); endCall(); navigate('/app/appointments') }
+  function leave() {
+    if (recording) stopRecording()
+    if (user?.role === 'doctor' && joined && !connectedOnce.current) {
+      void api.post(`/appointments/${appointmentId}/call/cancel`)
+    }
+    endCall()
+    navigate('/app/appointments')
+  }
+
+  useEffect(() => {
+    if (autojoin && query.data && !autojoinedRef.current && !joined) {
+      autojoinedRef.current = true
+      void joinCall()
+    }
+  }, [autojoin, query.data, joined, joinCall])
 
   if (query.isLoading) return <div className="page-content"><LoadingBlock /></div>
   if (query.isError) return <div className="page-content"><ErrorBlock message={query.error instanceof ApiError ? query.error.message : 'Unable to open appointment.'} /></div>

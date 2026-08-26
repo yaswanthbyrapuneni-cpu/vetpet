@@ -4,8 +4,11 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.models.domain import (
+    Appointment,
+    DoctorProfile,
     Notification,
     NotificationType,
+    Pet,
     Reminder,
 )
 
@@ -38,9 +41,21 @@ def make_notification(
 
 
 def notification_user_for_doctor(db: Session, doctor_id: str) -> str | None:
-    from app.models.domain import DoctorProfile
-
     return db.scalar(select(DoctorProfile.user_id).where(DoctorProfile.id == doctor_id))
+
+
+def appointment_participant_user_ids(db: Session, appointment: Appointment) -> list[str]:
+    """The pet owner's and assigned doctor's user ids, for pushing live events to both sides."""
+    row = db.execute(
+        select(Pet.owner_id, DoctorProfile.user_id)
+        .select_from(Appointment)
+        .join(Pet, Pet.id == Appointment.pet_id)
+        .join(DoctorProfile, DoctorProfile.id == Appointment.doctor_id)
+        .where(Appointment.id == appointment.id)
+    ).one_or_none()
+    if row is None:
+        return []
+    return [uid for uid in row if uid]
 
 
 def materialize_due_reminders(db: Session, user_id: str) -> int:

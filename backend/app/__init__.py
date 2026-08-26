@@ -1,2 +1,2 @@
-"""VetPet Connect API package."""
+"""Madina Vet Pet API package."""
 

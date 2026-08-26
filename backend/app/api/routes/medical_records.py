@@ -1,5 +1,3 @@
-import hashlib
-import uuid
 from pathlib import Path
 from typing import Annotated
 
@@ -10,6 +8,7 @@ from sqlalchemy.orm import Session
 
 from app.api.dependencies import CurrentUser, DbSession
 from app.core.config import get_settings
+from app.services.uploads import resolve_upload_path, store_upload
 from app.models.domain import (
     Appointment,
     AppointmentStatus,
@@ -176,32 +175,10 @@ async def upload_medical_document(
 ) -> MedicalDocument:
     record = get_accessible_record(db, record_id, user)
     ensure_record_author(user, record)
-    if file.content_type not in allowed_content_types:
-        raise HTTPException(status_code=415, detail="Only PDF, JPEG, and PNG files are allowed")
 
-    settings = get_settings()
-    upload_dir = Path(settings.upload_dir).resolve()
-    upload_dir.mkdir(parents=True, exist_ok=True)
-    storage_key = f"{uuid.uuid4()}{allowed_content_types[file.content_type]}"
-    destination = upload_dir / storage_key
-    digest = hashlib.sha256()
-    size = 0
-    try:
-        with destination.open("xb") as output:
-            while chunk := await file.read(1024 * 1024):
-                size += len(chunk)
-                if size > settings.max_upload_bytes:
-                    raise HTTPException(
-                        status_code=413,
-                        detail="Document exceeds upload size limit",
-                    )
-                digest.update(chunk)
-                output.write(chunk)
-    except Exception:
-        destination.unlink(missing_ok=True)
-        raise
-    finally:
-        await file.close()
+    content_type, storage_key, size, sha256 = await store_upload(
+        file, allowed_content_types, get_settings().max_upload_bytes
+    )
 
     original_filename = Path(file.filename or "document").name[:255]
     document = MedicalDocument(
@@ -209,9 +186,9 @@ async def upload_medical_document(
         uploaded_by_user_id=user.id,
         original_filename=original_filename,
         storage_key=storage_key,
-        content_type=file.content_type,
+        content_type=content_type,
         size_bytes=size,
-        sha256=digest.hexdigest(),
+        sha256=sha256,
     )
     db.add(document)
     db.commit()
@@ -227,7 +204,7 @@ def download_medical_document(
     if document is None:
         raise HTTPException(status_code=404, detail="Document not found")
     get_accessible_record(db, document.medical_record_id, user)
-    path = Path(get_settings().upload_dir).resolve() / document.storage_key
+    path = resolve_upload_path(document.storage_key)
     if not path.is_file():
         raise HTTPException(status_code=404, detail="Document file not found")
     return FileResponse(path, media_type=document.content_type, filename=document.original_filename)

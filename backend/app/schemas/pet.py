@@ -2,10 +2,12 @@ from datetime import date, datetime
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
+from app.models.domain import PetSpecies
+
 
 class PetBase(BaseModel):
     name: str = Field(min_length=1, max_length=120)
-    species: str = Field(min_length=1, max_length=80)
+    species: PetSpecies
     breed: str | None = Field(default=None, max_length=120)
     sex: str | None = Field(default=None, max_length=40)
     date_of_birth: date | None = None
@@ -26,7 +28,7 @@ class PetCreate(PetBase):
 
 class PetUpdate(BaseModel):
     name: str | None = Field(default=None, min_length=1, max_length=120)
-    species: str | None = Field(default=None, min_length=1, max_length=80)
+    species: PetSpecies | None = None
     breed: str | None = Field(default=None, max_length=120)
     sex: str | None = Field(default=None, max_length=40)
     date_of_birth: date | None = None

@@ -4,7 +4,7 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
 class Settings(BaseSettings):
-    app_name: str = "VetPet Connect API"
+    app_name: str = "Madina Vet Pet API"
     app_env: str = "development"
     debug: bool = False
     api_v1_prefix: str = "/api/v1"
@@ -16,6 +16,13 @@ class Settings(BaseSettings):
     upload_dir: str = "./uploads"
     max_upload_bytes: int = 10 * 1024 * 1024
     max_recording_bytes: int = 250 * 1024 * 1024
+    otp_mock_mode: bool = True
+    otp_expiry_seconds: int = 300
+    razorpay_key_id: str = ""
+    razorpay_key_secret: str = ""
+    twilio_account_sid: str = ""
+    twilio_auth_token: str = ""
+    twilio_from_number: str = ""
 
     model_config = SettingsConfigDict(
         env_file=(".env", "../.env"),

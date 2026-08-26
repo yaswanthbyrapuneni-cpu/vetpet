@@ -6,7 +6,6 @@ from fastapi.testclient import TestClient
 from sqlalchemy.orm import Session
 
 from app.core.config import get_settings
-from app.core.security import hash_password
 from app.models.domain import (
     Appointment,
     AppointmentStatus,
@@ -14,29 +13,24 @@ from app.models.domain import (
     User,
     UserRole,
 )
+from tests.conftest import otp_login_headers
 
-PASSWORD = "strong-password"
+
+def mobile_number_for(prefix: str, suffix: str) -> str:
+    digits = str(int(hashlib.sha256(suffix.encode()).hexdigest(), 16) % 100000).zfill(5)
+    return f"+91{prefix}{digits}"
 
 
-def login(client: TestClient, email: str, password: str = PASSWORD) -> dict[str, str]:
-    response = client.post(
-        "/api/v1/auth/login", json={"email": email, "password": password}
-    )
-    assert response.status_code == 200
-    return {"Authorization": f"Bearer {response.json()['access_token']}"}
+def login(client: TestClient, mobile_number: str) -> dict[str, str]:
+    return otp_login_headers(client, mobile_number)
 
 
 def create_owner_and_pet(client: TestClient, suffix: str) -> tuple[dict[str, str], str]:
-    email = f"records-owner-{suffix}@example.com"
-    response = client.post(
-        "/api/v1/auth/register/owner",
-        json={"email": email, "password": PASSWORD, "full_name": "Records Owner"},
-    )
-    assert response.status_code == 201
-    headers = login(client, email)
+    mobile_number = mobile_number_for("9876911", suffix)
+    headers = otp_login_headers(client, mobile_number, full_name="Records Owner")
     pet = client.post(
         "/api/v1/pets",
-        json={"name": "Luna", "species": "Cat", "weight_kg": 4.2},
+        json={"name": "Luna", "species": "cat", "weight_kg": 4.2},
         headers=headers,
     )
     assert pet.status_code == 201
@@ -60,8 +54,7 @@ def create_doctor_with_appointment(
     db_session: Session, pet_id: str, status: AppointmentStatus, suffix: str
 ) -> User:
     doctor = User(
-        email=f"records-doctor-{suffix}@example.com",
-        password_hash=hash_password(PASSWORD),
+        mobile_number=mobile_number_for("9876912", suffix),
         full_name="Dr Records",
         role=UserRole.DOCTOR,
     )
@@ -76,9 +69,7 @@ def create_doctor_with_appointment(
     appointment = Appointment(
         pet_id=pet_id,
         doctor_id=profile.id,
-        availability_id=f"test-slot-{suffix}",
         scheduled_start=now + timedelta(days=1),
-        scheduled_end=now + timedelta(days=1, minutes=30),
         reason="Medical record access",
         status=status,
     )
@@ -131,7 +122,7 @@ def test_confirmed_doctor_can_add_record_but_owner_cannot_edit_it(
     doctor = create_doctor_with_appointment(
         db_session, pet_id, AppointmentStatus.CONFIRMED, "confirmed"
     )
-    doctor_headers = login(client, doctor.email)
+    doctor_headers = login(client, doctor.mobile_number)
 
     created = create_record(client, doctor_headers, pet_id)
     assert created.status_code == 201
@@ -153,7 +144,7 @@ def test_requested_appointment_does_not_grant_medical_access(
     doctor = create_doctor_with_appointment(
         db_session, pet_id, AppointmentStatus.REQUESTED, "requested"
     )
-    response = create_record(client, login(client, doctor.email), pet_id)
+    response = create_record(client, login(client, doctor.mobile_number), pet_id)
     assert response.status_code == 404
 
 

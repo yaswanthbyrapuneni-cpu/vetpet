@@ -1,27 +1,28 @@
+import hashlib
 from datetime import UTC, date, datetime, timedelta
 
 from fastapi.testclient import TestClient
 from sqlalchemy.orm import Session
 
-from app.core.security import hash_password
 from app.models.domain import (
     Appointment,
     AppointmentStatus,
     DoctorProfile,
     Pet,
+    PetSpecies,
     User,
     UserRole,
 )
+from tests.conftest import otp_login_headers
 
-PASSWORD = "strong-password"
+
+def mobile_number_for(prefix: str, suffix: str) -> str:
+    digits = str(int(hashlib.sha256(suffix.encode()).hexdigest(), 16) % 100000).zfill(5)
+    return f"+91{prefix}{digits}"
 
 
-def login(client: TestClient, email: str) -> dict[str, str]:
-    response = client.post(
-        "/api/v1/auth/login", json={"email": email, "password": PASSWORD}
-    )
-    assert response.status_code == 200
-    return {"Authorization": f"Bearer {response.json()['access_token']}"}
+def login(client: TestClient, mobile_number: str) -> dict[str, str]:
+    return otp_login_headers(client, mobile_number)
 
 
 def setup_appointment(
@@ -31,14 +32,12 @@ def setup_appointment(
     appointment_status: AppointmentStatus = AppointmentStatus.CONFIRMED,
 ) -> tuple[dict[str, str], dict[str, str], str]:
     owner = User(
-        email=f"consult-owner-{suffix}@example.com",
-        password_hash=hash_password(PASSWORD),
+        mobile_number=mobile_number_for("9876913", suffix),
         full_name="Consultation Owner",
         role=UserRole.OWNER,
     )
     doctor_user = User(
-        email=f"consult-doctor-{suffix}@example.com",
-        password_hash=hash_password(PASSWORD),
+        mobile_number=mobile_number_for("9876914", suffix),
         full_name="Dr Consultation",
         role=UserRole.DOCTOR,
     )
@@ -47,22 +46,20 @@ def setup_appointment(
         license_number=f"CONSULT-{suffix.upper()}",
         qualification="BVSc & AH",
     )
-    pet = Pet(owner=owner, name="Bruno", species="Dog", weight_kg=22)
+    pet = Pet(owner=owner, name="Bruno", species=PetSpecies.DOG, weight_kg=22)
     db.add_all([owner, doctor_user, doctor, pet])
     db.flush()
     now = datetime.now(UTC)
     appointment = Appointment(
         pet_id=pet.id,
         doctor_id=doctor.id,
-        availability_id=f"consult-slot-{suffix}",
         scheduled_start=now - timedelta(minutes=15),
-        scheduled_end=now + timedelta(minutes=15),
         reason="Skin irritation",
         status=appointment_status,
     )
     db.add(appointment)
     db.commit()
-    return login(client, owner.email), login(client, doctor_user.email), appointment.id
+    return login(client, owner.mobile_number), login(client, doctor_user.mobile_number), appointment.id
 
 
 def create_consultation(

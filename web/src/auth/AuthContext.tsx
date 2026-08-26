@@ -1,12 +1,13 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useState } from 'react'
-import { api, ApiError, tokenStore } from '../api/client'
+import { api, ApiError, SESSION_EXPIRED_EVENT, tokenStore } from '../api/client'
 import type { User } from '../types'
 
 interface AuthContextValue {
   user: User | null
   loading: boolean
   error: string | null
-  login(email: string, password: string): Promise<boolean>
+  requestOtp(mobileNumber: string): Promise<string | null>
+  verifyOtp(mobileNumber: string, code: string, fullName?: string): Promise<boolean>
   logout(): void
   clearError(): void
 }
@@ -37,17 +38,44 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     void loadUser()
   }, [loadUser])
 
-  const login = useCallback(async (email: string, password: string) => {
+  useEffect(() => {
+    function onSessionExpired() {
+      setUser(null)
+      setLoading(false)
+    }
+    window.addEventListener(SESSION_EXPIRED_EVENT, onSessionExpired)
+    return () => window.removeEventListener(SESSION_EXPIRED_EVENT, onSessionExpired)
+  }, [])
+
+  const requestOtp = useCallback(async (mobileNumber: string) => {
+    setError(null)
+    try {
+      const result = await api.post<{ expires_in: number; dev_otp: string | null }>(
+        '/auth/otp/request',
+        { mobile_number: mobileNumber },
+      )
+      return result.dev_otp
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : 'Could not send the code.')
+      return null
+    }
+  }, [])
+
+  const verifyOtp = useCallback(async (mobileNumber: string, code: string, fullName?: string) => {
     setLoading(true)
     setError(null)
     try {
-      const result = await api.post<{ access_token: string }>('/auth/login', { email, password })
+      const result = await api.post<{ access_token: string }>('/auth/otp/verify', {
+        mobile_number: mobileNumber,
+        code,
+        full_name: fullName,
+      })
       tokenStore.set(result.access_token)
       setUser(await api.get<User>('/auth/me'))
       return true
     } catch (caught) {
       tokenStore.clear()
-      setError(caught instanceof Error ? caught.message : 'Sign in failed.')
+      setError(caught instanceof Error ? caught.message : 'Verification failed.')
       return false
     } finally {
       setLoading(false)
@@ -61,8 +89,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   }, [])
 
   const value = useMemo(
-    () => ({ user, loading, error, login, logout, clearError: () => setError(null) }),
-    [user, loading, error, login, logout],
+    () => ({ user, loading, error, requestOtp, verifyOtp, logout, clearError: () => setError(null) }),
+    [user, loading, error, requestOtp, verifyOtp, logout],
   )
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>
 }

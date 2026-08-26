@@ -2,34 +2,29 @@ import argparse
 
 from sqlalchemy import select
 
-from app.core.security import hash_password
+from app.api.routes.auth import normalized_mobile_number
 from app.db.session import SessionLocal
 from app.models.domain import User, UserRole
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Create a VetPet Connect administrator")
-    parser.add_argument("--email", required=True)
+    parser = argparse.ArgumentParser(description="Create a Madina Vet Pet administrator")
+    parser.add_argument("--mobile-number", required=True)
     parser.add_argument("--name", required=True)
-    parser.add_argument("--password", required=True)
     args = parser.parse_args()
-    if len(args.password) < 12:
-        raise SystemExit("Administrator passwords must contain at least 12 characters")
 
-    email = args.email.strip().lower()
+    mobile_number = normalized_mobile_number(args.mobile_number)
     with SessionLocal() as db:
-        if db.scalar(select(User).where(User.email == email)) is not None:
-            raise SystemExit("A user with this email already exists")
+        if db.scalar(select(User).where(User.mobile_number == mobile_number)) is not None:
+            raise SystemExit("A user with this mobile number already exists")
         admin = User(
-            email=email,
+            mobile_number=mobile_number,
             full_name=args.name.strip(),
-            password_hash=hash_password(args.password),
             role=UserRole.ADMIN,
-            is_email_verified=True,
         )
         db.add(admin)
         db.commit()
-        print(f"Administrator created: {email}")
+        print(f"Administrator created: {mobile_number}")
 
 
 if __name__ == "__main__":

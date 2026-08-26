@@ -2,19 +2,19 @@ export type UserRole = 'owner' | 'doctor' | 'admin'
 
 export interface User {
   id: string
-  email: string
+  mobile_number: string
   full_name: string
-  phone: string | null
   role: UserRole
   is_active: boolean
-  is_email_verified: boolean
 }
+
+export type PetSpecies = 'dog' | 'cat' | 'cow' | 'buffalo' | 'sheep' | 'goat' | 'country_hen' | 'farm_hen' | 'other'
 
 export interface Pet {
   id: string
   owner_id: string
   name: string
-  species: string
+  species: PetSpecies
   breed: string | null
   sex: string | null
   date_of_birth: string | null
@@ -35,26 +35,55 @@ export interface Doctor {
   bio: string | null
   verification_status: 'pending' | 'verified' | 'rejected'
   verification_note: string | null
-}
-
-export interface Availability {
-  id: string
-  doctor_id: string
-  starts_at: string
-  ends_at: string
-  is_booked: boolean
+  is_online: boolean
 }
 
 export interface Appointment {
   id: string
   pet_id: string
   doctor_id: string
-  availability_id: string
+  species: PetSpecies
+  owner_name: string
+  owner_mobile_number: string
   scheduled_start: string
-  scheduled_end: string
   reason: string
   consultation_type: 'video' | 'audio'
-  status: 'requested' | 'confirmed' | 'rejected' | 'cancelled' | 'completed'
+  status: 'requested' | 'confirmed' | 'rejected' | 'cancelled' | 'completed' | 'no_show'
+  payment_status: 'pending' | 'paid' | 'failed'
+  payment_amount_paise: number
+  paid_at: string | null
+  razorpay_payment_id: string | null
+  created_at: string
+  updated_at: string
+}
+
+export interface AppointmentAttachment {
+  id: string
+  appointment_id: string
+  uploaded_by_user_id: string
+  kind: 'photo' | 'video' | 'voice'
+  original_filename: string
+  content_type: string
+  size_bytes: number
+  created_at: string
+}
+
+export interface AppointmentMessage {
+  id: string
+  appointment_id: string
+  sender_user_id: string
+  body: string
+  created_at: string
+}
+
+export interface AppointmentRating {
+  id: string
+  appointment_id: string
+  rated_by_user_id: string
+  stars: number
+  tags: string[]
+  comment: string | null
+  created_at: string
 }
 
 export interface CallRecording {
@@ -68,6 +97,26 @@ export interface CallRecording {
   duration_seconds: number | null
   consent_confirmed_at: string
   created_at: string
+}
+
+export interface ThreadPreview {
+  kind: 'message' | 'photo' | 'video' | 'voice'
+  text: string | null
+  created_at: string
+  sender_user_id: string
+}
+
+export interface AppointmentThreadSummary {
+  appointment_id: string
+  pet_name: string
+  species: PetSpecies
+  owner_name: string
+  doctor_name: string
+  status: Appointment['status']
+  payment_status: Appointment['payment_status']
+  consultation_type: Appointment['consultation_type']
+  last_activity_at: string
+  preview: ThreadPreview | null
 }
 
 export interface Notification {

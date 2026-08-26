@@ -7,7 +7,7 @@ def test_health_check(client: TestClient) -> None:
     assert response.status_code == 200
     assert response.json() == {
         "status": "ok",
-        "service": "VetPet Connect API",
+        "service": "Madina Vet Pet API",
         "environment": "development",
     }
 

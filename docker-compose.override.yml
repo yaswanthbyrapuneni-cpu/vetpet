@@ -1,0 +1,10 @@
+services:
+  frontend:
+    ports:
+      # No domain yet: this exposes the whole app directly on the bare IP
+      # (http://<server-ip>:18080) without touching the shared Caddy at all.
+      # Once you have a domain, delete this file — Docker Compose loads it
+      # automatically alongside docker-compose.yml, so its absence switches
+      # you back to the "no published ports, routed via the shared Caddy"
+      # setup described in the README, with no other changes needed.
+      - "18080:80"

@@ -3,9 +3,9 @@ requires = ["setuptools>=75"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "vetpet-connect-api"
+name = "madina-vet-pet-api"
 version = "0.1.0"
-description = "Backend API for VetPet Connect"
+description = "Backend API for Madina Vet Pet"
 requires-python = ">=3.11"
 dependencies = [
   "alembic>=1.14,<2.0",
@@ -14,9 +14,13 @@ dependencies = [
   "pwdlib[argon2]>=0.2,<1.0",
   "pyjwt>=2.10,<3.0",
   "python-multipart>=0.0.20,<1.0",
+  "razorpay>=1.4,<2.0",
   "reportlab>=4.2,<5.0",
+  "twilio>=9.3,<10.0",
   "pydantic-settings>=2.7,<3.0",
+  "setuptools<81",
   "sqlalchemy>=2.0,<3.0",
+  "truststore>=0.9,<1.0",
   "uvicorn[standard]>=0.34,<1.0",
 ]
 

@@ -32,6 +32,7 @@ from app.schemas.consultation import (
     PrescriptionWrite,
 )
 from app.services.notifications import make_notification
+from app.services.realtime import event_hub
 
 router = APIRouter()
 DoctorUser = Annotated[User, Depends(require_roles(UserRole.DOCTOR))]
@@ -233,7 +234,7 @@ def replace_prescription(
     "/doctor/consultations/{consultation_id}/prescription",
     response_model=PrescriptionResponse,
 )
-def write_prescription(
+async def write_prescription(
     consultation_id: str,
     payload: PrescriptionWrite,
     doctor: DoctorUser,
@@ -243,16 +244,21 @@ def write_prescription(
     prescription = replace_prescription(db, consultation, payload)
     appointment = db.get(Appointment, consultation.appointment_id)
     pet = db.get(Pet, appointment.pet_id) if appointment is not None else None
-    if pet is not None:
+    if pet is not None and appointment is not None:
         make_notification(
             db,
             pet.owner_id,
             NotificationType.PRESCRIPTION,
             "Prescription available",
             f"A veterinarian issued a prescription for {pet.name}.",
-            {"consultation_id": consultation.id, "prescription_id": prescription.id},
+            {
+                "consultation_id": consultation.id,
+                "prescription_id": prescription.id,
+                "appointment_id": appointment.id,
+            },
         )
         db.commit()
+        await event_hub.send_to_user(pet.owner_id, {"type": "notification"})
     return prescription
 
 
@@ -296,7 +302,7 @@ def download_prescription_pdf(
 
     buffer = BytesIO()
     canvas = Canvas(buffer, pagesize=A4)
-    y = pdf_line(canvas, "VetPet Connect - Veterinary Prescription", 800, bold=True)
+    y = pdf_line(canvas, "Madina Vet Pet - Veterinary Prescription", 800, bold=True)
     y = pdf_line(canvas, f"Pet: {pet.name} ({pet.species})", y)
     y = pdf_line(canvas, f"Veterinarian: {doctor.user.full_name}", y)
     y = pdf_line(canvas, f"Qualification: {doctor.qualification}", y)

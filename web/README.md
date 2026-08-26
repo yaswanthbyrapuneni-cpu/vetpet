@@ -1,6 +1,6 @@
-# VetPet Connect web client
+# Madina Vet Pet web client
 
-Responsive React and TypeScript client for the VetPet Connect FastAPI backend.
+Responsive React and TypeScript client for the Madina Vet Pet FastAPI backend.
 It is the active frontend and can be installed as a Progressive Web App.
 
 ## Development

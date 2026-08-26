@@ -1,11 +1,14 @@
 import { AlertCircle, Inbox } from 'lucide-react'
+import { useLanguage } from '../i18n/LanguageContext'
 
 export function LoadingBlock() {
-  return <div className="feedback"><span className="spinner" /><p>Loading…</p></div>
+  const { t } = useLanguage()
+  return <div className="feedback"><span className="spinner" /><p>{t('common.loading')}</p></div>
 }
 
 export function ErrorBlock({ message, retry }: { message: string; retry?: () => void }) {
-  return <div className="feedback error"><AlertCircle /><p>{message}</p>{retry && <button className="button secondary" onClick={retry}>Try again</button>}</div>
+  const { t } = useLanguage()
+  return <div className="feedback error"><AlertCircle /><p>{message}</p>{retry && <button className="button secondary" onClick={retry}>{t('common.tryAgain')}</button>}</div>
 }
 
 export function EmptyBlock({ title, text }: { title: string; text: string }) {

@@ -4,33 +4,24 @@ from fastapi.testclient import TestClient
 from sqlalchemy.orm import Session
 
 from app.models.domain import Reminder, ReminderType
-
-PASSWORD = "strong-password"
+from tests.conftest import otp_login_headers
 
 
 def create_owner_and_pet(
     client: TestClient, suffix: str
 ) -> tuple[dict[str, str], dict[str, object]]:
-    email = f"notification-owner-{suffix}@example.com"
-    registration = client.post(
-        "/api/v1/auth/register/owner",
-        json={"email": email, "password": PASSWORD, "full_name": "Reminder Owner"},
-    )
-    assert registration.status_code == 201
-    login = client.post(
-        "/api/v1/auth/login", json={"email": email, "password": PASSWORD}
-    )
-    headers = {"Authorization": f"Bearer {login.json()['access_token']}"}
+    mobile_number = f"+9198767{suffix.zfill(5)}"
+    headers = otp_login_headers(client, mobile_number, full_name="Reminder Owner")
     pet = client.post(
         "/api/v1/pets",
-        json={"name": "Coco", "species": "Dog"},
+        json={"name": "Coco", "species": "dog"},
         headers=headers,
     )
     return headers, pet.json()
 
 
 def test_owner_creates_updates_and_deactivates_reminder(client: TestClient) -> None:
-    headers, pet = create_owner_and_pet(client, "crud")
+    headers, pet = create_owner_and_pet(client, "00001")
     scheduled = datetime.now(UTC) + timedelta(days=1)
     created = client.post(
         f"/api/v1/pets/{pet['id']}/reminders",
@@ -62,7 +53,7 @@ def test_owner_creates_updates_and_deactivates_reminder(client: TestClient) -> N
 def test_due_reminder_becomes_notification_and_can_be_read(
     client: TestClient, db_session: Session
 ) -> None:
-    headers, pet = create_owner_and_pet(client, "due")
+    headers, pet = create_owner_and_pet(client, "00002")
     reminder = Reminder(
         user_id=pet["owner_id"],
         pet_id=pet["id"],
@@ -90,7 +81,7 @@ def test_due_reminder_becomes_notification_and_can_be_read(
 def test_repeating_due_reminder_advances_to_future(
     client: TestClient, db_session: Session
 ) -> None:
-    headers, pet = create_owner_and_pet(client, "repeat")
+    headers, pet = create_owner_and_pet(client, "00003")
     reminder = Reminder(
         user_id=pet["owner_id"],
         pet_id=pet["id"],
@@ -115,8 +106,8 @@ def test_repeating_due_reminder_advances_to_future(
 def test_users_cannot_read_each_others_notifications(
     client: TestClient, db_session: Session
 ) -> None:
-    first_headers, pet = create_owner_and_pet(client, "first")
-    second_headers, _ = create_owner_and_pet(client, "second")
+    first_headers, pet = create_owner_and_pet(client, "00004")
+    second_headers, _ = create_owner_and_pet(client, "00005")
     reminder = Reminder(
         user_id=pet["owner_id"],
         pet_id=pet["id"],

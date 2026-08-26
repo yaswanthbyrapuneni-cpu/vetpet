@@ -1,7 +1,6 @@
-from datetime import datetime
 from enum import StrEnum
 
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field
 
 from app.models.domain import VerificationStatus
 from app.schemas.auth import UserResponse
@@ -13,6 +12,10 @@ class DoctorProfileUpdate(BaseModel):
     experience_years: int | None = Field(default=None, ge=0, le=80)
     hospital_name: str | None = Field(default=None, max_length=200)
     bio: str | None = Field(default=None, max_length=3000)
+
+
+class DoctorStatusUpdate(BaseModel):
+    is_online: bool
 
 
 class DoctorProfileResponse(BaseModel):
@@ -28,29 +31,7 @@ class DoctorProfileResponse(BaseModel):
     bio: str | None
     verification_status: VerificationStatus
     verification_note: str | None
-
-
-class AvailabilityCreate(BaseModel):
-    starts_at: datetime
-    ends_at: datetime
-
-    @model_validator(mode="after")
-    def end_must_follow_start(self) -> "AvailabilityCreate":
-        if self.starts_at.tzinfo is None or self.ends_at.tzinfo is None:
-            raise ValueError("Availability times must include a timezone")
-        if self.ends_at <= self.starts_at:
-            raise ValueError("Availability end must be after start")
-        return self
-
-
-class AvailabilityResponse(BaseModel):
-    model_config = ConfigDict(from_attributes=True)
-
-    id: str
-    doctor_id: str
-    starts_at: datetime
-    ends_at: datetime
-    is_booked: bool
+    is_online: bool
 
 
 class VerificationDecision(StrEnum):
@@ -61,4 +42,3 @@ class VerificationDecision(StrEnum):
 class DoctorVerificationRequest(BaseModel):
     decision: VerificationDecision
     note: str | None = Field(default=None, max_length=1000)
-

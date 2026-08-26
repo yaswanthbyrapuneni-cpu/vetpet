@@ -1,3 +1,4 @@
+import secrets
 from datetime import UTC, datetime, timedelta
 
 import jwt
@@ -6,6 +7,10 @@ from pwdlib import PasswordHash
 from app.core.config import get_settings
 
 password_hash = PasswordHash.recommended()
+
+
+def generate_otp_code() -> str:
+    return f"{secrets.randbelow(1_000_000):06d}"
 
 
 def hash_password(password: str) -> str:
