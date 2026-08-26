@@ -150,6 +150,17 @@ export function DashboardPage() {
 
         <section className="hero-card"><div><span className="hero-kicker">{t('dashboard.eyebrow')}</span><h2>{t('dashboard.heroTitle')}</h2><p>{t('dashboard.heroText')}</p><Link to="/app/records" className="button light"><FileText size={18} />{t('dashboard.managePets')} <ChevronRight size={18} /></Link></div><PawPrint className="hero-mark" /></section>
         <section className="empty-panel"><Bell /><div><h3>{t('dashboard.noReminders')}</h3><p>{t('dashboard.noRemindersText')}</p></div></section>
+
+        <label className="label" style={{ display: 'block', margin: '24px 0 10px', fontWeight: 700 }}>{t('dashboard.youtubeTitle')}</label>
+        <div className="youtube-playlist-wrap">
+          <iframe
+            src="https://www.youtube.com/embed/videoseries?list=UUbv75PcQOlkVsDZ_KZKV0lg"
+            title={t('dashboard.youtubeTitle')}
+            loading="lazy"
+            allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share"
+            allowFullScreen
+          />
+        </div>
       </> : <>
         {ownProfile.data && (
           <div className="card status-toggle-card">

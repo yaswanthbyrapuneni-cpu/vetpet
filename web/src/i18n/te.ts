@@ -75,6 +75,7 @@ export const te: Record<keyof typeof en, string> = {
   'dashboard.filterToday': 'ఈరోజు',
   'dashboard.filterWeek': 'గత 7 రోజులు',
   'dashboard.filterMonth': 'ఈ నెల',
+  'dashboard.youtubeTitle': 'డా. మదీనా యూట్యూబ్ ఛానెల్ నుండి వైద్య చిట్కాలు',
   'dashboard.noPatients': 'ఈ పరిధిలో రోగులు లేరు',
   'dashboard.noPatientsText': 'విస్తృత తేదీ పరిధిని ప్రయత్నించండి, లేదా కొత్త సంప్రదింపు చెల్లించిన తర్వాత మళ్ళీ తనిఖీ చేయండి.',
 

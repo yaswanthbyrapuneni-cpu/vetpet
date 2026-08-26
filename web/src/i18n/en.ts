@@ -73,6 +73,7 @@ export const en = {
   'dashboard.filterToday': 'Today',
   'dashboard.filterWeek': 'Last 7 days',
   'dashboard.filterMonth': 'This month',
+  'dashboard.youtubeTitle': "Vet tips from Dr. Madina's YouTube channel",
   'dashboard.noPatients': 'No patients in this range',
   'dashboard.noPatientsText': 'Try a wider date range, or check back once a new consultation is paid for.',
 
