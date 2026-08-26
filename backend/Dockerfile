@@ -4,6 +4,7 @@ WORKDIR /app
 COPY pyproject.toml ./
 COPY app ./app
 COPY migrations ./migrations
+COPY scripts ./scripts
 COPY alembic.ini ./
 RUN pip install --no-cache-dir ".[postgres]"
 
